@@ -1,7 +1,7 @@
 import os
 import uuid
-import numpy as np
-import soundfile as sf
+import wave
+import struct
 from pathlib import Path
 from typing import Optional, Dict, Any
 import logging
@@ -18,17 +18,18 @@ except ImportError:
 try:
     import librosa
     import librosa.effects
+    import soundfile as sf
     LIBROSA_AVAILABLE = True
 except ImportError:
     LIBROSA_AVAILABLE = False
-    logger.warning("librosa not installed. Audio processing will be limited.")
+    logger.warning("librosa not available. Audio processing will be limited.")
 
 try:
     from pydub import AudioSegment
     PYDUB_AVAILABLE = True
 except ImportError:
     PYDUB_AVAILABLE = False
-    logger.warning("pydub not installed. Audio format conversion will be limited.")
+    logger.warning("pydub not available. Audio format conversion will be limited.")
 
 
 class VoiceCloner:
@@ -74,12 +75,6 @@ class VoiceCloner:
         Returns:
             包含克隆结果的字典
         """
-        if not TTS_AVAILABLE:
-            return {
-                "success": False,
-                "error": "TTS library is not available. Please install it with 'pip install TTS'."
-            }
-        
         try:
             # 生成唯一的说话人ID
             speaker_id = speaker_name or str(uuid.uuid4())
@@ -93,6 +88,15 @@ class VoiceCloner:
             
             # 保存说话人音频路径
             self.speaker_embeddings[speaker_id] = audio_path
+            
+            if not TTS_AVAILABLE:
+                logger.warning("TTS library not available. Running in demo mode.")
+                return {
+                    "success": True,
+                    "speaker_id": speaker_id,
+                    "message": "Voice cloned successfully (Demo Mode - TTS not available)",
+                    "demo_mode": True
+                }
             
             logger.info(f"Voice cloned successfully for speaker: {speaker_id}")
             
@@ -134,12 +138,6 @@ class VoiceCloner:
         Returns:
             包含生成结果的字典
         """
-        if not TTS_AVAILABLE:
-            return {
-                "success": False,
-                "error": "TTS library is not available. Please install it with 'pip install TTS'."
-            }
-        
         try:
             # 检查说话人是否存在
             if speaker_id not in self.speaker_embeddings:
@@ -148,14 +146,26 @@ class VoiceCloner:
                     "error": f"Speaker not found: {speaker_id}. Please clone a voice first."
                 }
             
-            # 加载TTS模型
-            tts = self._load_tts_model()
-            
             # 生成输出文件名
             if output_filename is None:
                 output_filename = f"{speaker_id}_{uuid.uuid4().hex[:8]}.wav"
             
             output_path = self.output_dir / output_filename
+            
+            # 如果TTS不可用，使用演示模式生成静音音频
+            if not TTS_AVAILABLE:
+                logger.warning("TTS library not available. Running in demo mode - generating silent audio.")
+                self._generate_demo_audio(str(output_path), text, speed, pitch)
+                return {
+                    "success": True,
+                    "output_path": str(output_path),
+                    "filename": output_filename,
+                    "message": "Speech generated successfully (Demo Mode - Silent audio)",
+                    "demo_mode": True
+                }
+            
+            # 加载TTS模型
+            tts = self._load_tts_model()
             
             # 获取说话人音频路径
             speaker_wav = self.speaker_embeddings[speaker_id]
@@ -190,6 +200,60 @@ class VoiceCloner:
                 "success": False,
                 "error": str(e)
             }
+    
+    def _generate_demo_audio(self, output_path: str, text: str, speed: float, pitch: float):
+        """
+        生成演示用的音频（静音或简单的提示音）
+        
+        Args:
+            output_path: 输出文件路径
+            text: 文本内容（用于计算音频长度）
+            speed: 语速
+            pitch: 音调
+        """
+        try:
+            # 计算音频长度（基于文本长度和语速）
+            # 假设每秒约3个汉字或5个英文单词
+            text_length = len(text)
+            duration = max(1.0, text_length / 3.0 / speed)  # 至少1秒
+            
+            # 使用Python内置的wave模块生成静音WAV文件
+            sample_rate = 22050
+            num_channels = 1
+            sample_width = 2  # 16-bit
+            num_frames = int(duration * sample_rate)
+            
+            with wave.open(output_path, 'w') as wav_file:
+                wav_file.setnchannels(num_channels)
+                wav_file.setsampwidth(sample_width)
+                wav_file.setframerate(sample_rate)
+                wav_file.setnframes(num_frames)
+                
+                # 写入静音数据（所有样本为0）
+                silence = b'\x00\x00' * num_frames
+                wav_file.writeframes(silence)
+            
+            logger.info(f"Demo audio generated: {output_path} (duration: {duration:.2f}s)")
+            
+        except Exception as e:
+            logger.error(f"Error generating demo audio: {str(e)}")
+            # 创建一个非常短的静音文件作为备用
+            try:
+                sample_rate = 22050
+                num_channels = 1
+                sample_width = 2
+                num_frames = sample_rate  # 1秒静音
+                
+                with wave.open(output_path, 'w') as wav_file:
+                    wav_file.setnchannels(num_channels)
+                    wav_file.setsampwidth(sample_width)
+                    wav_file.setframerate(sample_rate)
+                    wav_file.setnframes(num_frames)
+                    
+                    silence = b'\x00\x00' * num_frames
+                    wav_file.writeframes(silence)
+            except:
+                pass
     
     def _adjust_audio_parameters(self, audio_path: str, speed: float, pitch: float):
         """
