@@ -3,10 +3,9 @@ import uuid
 import shutil
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Request
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import logging
 
