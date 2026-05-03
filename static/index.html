@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>声音复刻智能体</title>
+    <link rel="stylesheet" href="static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>声音复刻智能体</h1>
+            <p>上传一段音频，复刻其中的人声，用于文案朗读</p>
+        </header>
+
+        <main>
+            <section class="section" id="clone-section">
+                <h2>1. 克隆声音</h2>
+                <div class="form-group">
+                    <label for="audio-file">选择音频文件：</label>
+                    <input type="file" id="audio-file" accept=".wav,.mp3,.m4a,.flac,.ogg">
+                    <p class="help-text">支持的格式：WAV, MP3, M4A, FLAC, OGG</p>
+                </div>
+                <div class="form-group">
+                    <label for="speaker-name">说话人名称（可选）：</label>
+                    <input type="text" id="speaker-name" placeholder="例如：我的声音">
+                </div>
+                <button id="clone-btn" class="btn btn-primary">克隆声音</button>
+                <div id="clone-result" class="result"></div>
+            </section>
+
+            <section class="section" id="speakers-section">
+                <h2>2. 选择说话人</h2>
+                <div class="form-group">
+                    <label for="speaker-select">已克隆的声音：</label>
+                    <select id="speaker-select">
+                        <option value="">-- 请先克隆声音 --</option>
+                    </select>
+                </div>
+                <button id="refresh-speakers-btn" class="btn btn-secondary">刷新列表</button>
+                <div id="speakers-list" class="speakers-list"></div>
+            </section>
+
+            <section class="section" id="tts-section">
+                <h2>3. 文本转语音</h2>
+                <div class="form-group">
+                    <label for="text-input">输入要朗读的文本：</label>
+                    <textarea id="text-input" rows="5" placeholder="请输入要朗读的文本..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="language">语言：</label>
+                    <select id="language">
+                        <option value="zh">中文</option>
+                        <option value="en">英文</option>
+                        <option value="ja">日文</option>
+                        <option value="ko">韩文</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="speed">语速：<span id="speed-value">1.0</span></label>
+                    <input type="range" id="speed" min="0.5" max="2.0" step="0.1" value="1.0">
+                </div>
+                <div class="form-group">
+                    <label for="pitch">音调：<span id="pitch-value">0</span></label>
+                    <input type="range" id="pitch" min="-12" max="12" step="1" value="0">
+                </div>
+                <div class="form-group">
+                    <label for="emotion">语气：</label>
+                    <select id="emotion">
+                        <option value="neutral">中性</option>
+                        <option value="happy">开心</option>
+                        <option value="sad">悲伤</option>
+                        <option value="angry">生气</option>
+                    </select>
+                </div>
+                <button id="tts-btn" class="btn btn-primary">生成语音</button>
+                <div id="tts-result" class="result"></div>
+            </section>
+
+            <section class="section" id="audio-section" style="display: none;">
+                <h2>4. 播放和下载</h2>
+                <div id="audio-player-container">
+                    <audio id="audio-player" controls></audio>
+                    <a id="download-link" class="btn btn-secondary" href="#" download>下载音频</a>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>&copy; 2024 声音复刻智能体 | 基于Coqui TTS</p>
+        </footer>
+    </div>
+
+    <div id="loading-overlay" class="loading-overlay" style="display: none;">
+        <div class="loading-spinner"></div>
+        <p id="loading-text">处理中...</p>
+    </div>
+
+    <script src="static/js/app.js"></script>
+</body>
+</html>
