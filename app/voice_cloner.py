@@ -2,6 +2,7 @@ import os
 import uuid
 import wave
 import struct
+import asyncio
 from pathlib import Path
 from typing import Optional, Dict, Any
 import logging
@@ -14,6 +15,13 @@ try:
 except ImportError:
     TTS_AVAILABLE = False
     logger.warning("TTS library not installed. Voice cloning will not be available.")
+
+try:
+    import edge_tts
+    EDGE_TTS_AVAILABLE = True
+except ImportError:
+    EDGE_TTS_AVAILABLE = False
+    logger.warning("edge-tts library not installed. Using silent demo mode.")
 
 try:
     import librosa
@@ -30,6 +38,19 @@ try:
 except ImportError:
     PYDUB_AVAILABLE = False
     logger.warning("pydub not available. Audio format conversion will be limited.")
+
+
+# 预设的语音列表（edge-tts支持的中文语音）
+PRESET_VOICES = {
+    "zh-CN-XiaoxiaoNeural": {"name": "晓晓", "gender": "Female", "language": "zh-CN"},
+    "zh-CN-YunxiNeural": {"name": "云希", "gender": "Male", "language": "zh-CN"},
+    "zh-CN-YunjianNeural": {"name": "云健", "gender": "Male", "language": "zh-CN"},
+    "zh-CN-XiaoyiNeural": {"name": "晓伊", "gender": "Female", "language": "zh-CN"},
+    "zh-HK-HiuGaaiNeural": {"name": "曉佳", "gender": "Female", "language": "zh-HK"},
+    "zh-HK-WanLungNeural": {"name": "雲龍", "gender": "Male", "language": "zh-HK"},
+    "zh-TW-HsiaoChenNeural": {"name": "曉臻", "gender": "Female", "language": "zh-TW"},
+    "zh-TW-YunJheNeural": {"name": "雲哲", "gender": "Male", "language": "zh-TW"},
+}
 
 
 class VoiceCloner:
@@ -90,12 +111,13 @@ class VoiceCloner:
             self.speaker_embeddings[speaker_id] = audio_path
             
             if not TTS_AVAILABLE:
-                logger.warning("TTS library not available. Running in demo mode.")
+                logger.warning("TTS library not available. Running in demo mode with edge-tts.")
                 return {
                     "success": True,
                     "speaker_id": speaker_id,
-                    "message": "Voice cloned successfully (Demo Mode - TTS not available)",
-                    "demo_mode": True
+                    "message": "Voice registered (Demo Mode - using preset voices from edge-tts)",
+                    "demo_mode": True,
+                    "note": "Voice cloning requires Python 3.11 or 3.12 with Coqui TTS"
                 }
             
             logger.info(f"Voice cloned successfully for speaker: {speaker_id}")
@@ -152,16 +174,37 @@ class VoiceCloner:
             
             output_path = self.output_dir / output_filename
             
-            # 如果TTS不可用，使用演示模式生成静音音频
+            # 如果Coqui TTS不可用，尝试使用edge-tts
             if not TTS_AVAILABLE:
-                logger.warning("TTS library not available. Running in demo mode - generating silent audio.")
-                self._generate_demo_audio(str(output_path), text, speed, pitch)
+                if EDGE_TTS_AVAILABLE:
+                    logger.info("Using edge-tts for text-to-speech (demo mode)")
+                    success, actual_output_path = self._generate_with_edge_tts(
+                        str(output_path), text, language, speed, pitch
+                    )
+                    if success:
+                        # 获取实际的文件名
+                        actual_filename = os.path.basename(actual_output_path)
+                        return {
+                            "success": True,
+                            "output_path": actual_output_path,
+                            "filename": actual_filename,
+                            "message": "Speech generated with edge-tts (Demo Mode - using preset voice)",
+                            "demo_mode": True,
+                            "voice_used": "zh-CN-XiaoxiaoNeural (晓晓)",
+                            "note": "Voice cloning requires Python 3.11 or 3.12 with Coqui TTS",
+                            "format": "MP3" if actual_output_path.endswith('.mp3') else "WAV"
+                        }
+                
+                # 如果edge-tts也不可用，生成静音
+                logger.warning("No TTS library available. Generating silent audio.")
+                self._generate_silent_audio(str(output_path), text, speed)
                 return {
                     "success": True,
                     "output_path": str(output_path),
                     "filename": output_filename,
-                    "message": "Speech generated successfully (Demo Mode - Silent audio)",
-                    "demo_mode": True
+                    "message": "Silent audio generated (no TTS library available)",
+                    "demo_mode": True,
+                    "silent": True
                 }
             
             # 加载TTS模型
@@ -201,19 +244,136 @@ class VoiceCloner:
                 "error": str(e)
             }
     
-    def _generate_demo_audio(self, output_path: str, text: str, speed: float, pitch: float):
+    def _generate_with_edge_tts(
+        self, 
+        output_path: str, 
+        text: str, 
+        language: str = "zh",
+        speed: float = 1.0,
+        pitch: float = 0.0
+    ) -> tuple:
         """
-        生成演示用的音频（静音或简单的提示音）
+        使用edge-tts生成语音
+        
+        Args:
+            output_path: 输出文件路径
+            text: 文本内容
+            language: 语言代码
+            speed: 语速
+            pitch: 音调
+        
+        Returns:
+            (成功标志, 实际输出路径)
+        """
+        try:
+            # 选择合适的语音
+            voice = "zh-CN-XiaoxiaoNeural"  # 默认使用晓晓
+            
+            # 计算语速和音调参数
+            # edge-tts的语速范围：-50% 到 +100%
+            # 我们的speed参数：0.5 到 2.0
+            # 转换：speed=0.5 -> rate=-50%, speed=2.0 -> rate=+100%
+            rate_percent = int((speed - 1.0) * 100)
+            # edge-tts不接受"+0%"，只接受"0%"或不传递参数
+            if rate_percent == 0:
+                rate_str = None
+            else:
+                rate_str = f"{rate_percent:+d}%"
+            
+            # 音调参数：edge-tts使用Hz或百分比
+            # 我们的pitch参数：-12 到 +12（半音数）
+            # 粗略转换为百分比
+            pitch_percent = int(pitch * 5)  # 每个半音约5%
+            # edge-tts不接受"+0%"，只接受"0%"或不传递参数
+            if pitch_percent == 0:
+                pitch_str = None
+            else:
+                pitch_str = f"{pitch_percent:+d}%"
+            
+            # 创建临时MP3文件
+            temp_mp3 = output_path.replace('.wav', '.mp3')
+            
+            # 定义异步函数来生成语音
+            async def generate_speech():
+                # 构建参数字典
+                kwargs = {
+                    "text": text,
+                    "voice": voice
+                }
+                if rate_str is not None:
+                    kwargs["rate"] = rate_str
+                if pitch_str is not None:
+                    kwargs["pitch"] = pitch_str
+                
+                communicate = edge_tts.Communicate(**kwargs)
+                await communicate.save(temp_mp3)
+            
+            # 运行异步函数
+            asyncio.run(generate_speech())
+            
+            # 检查MP3文件是否生成成功
+            if not os.path.exists(temp_mp3):
+                logger.error(f"edge-tts failed to generate MP3 file: {temp_mp3}")
+                self._generate_silent_audio(output_path, text, speed)
+                return (False, output_path)
+            
+            # 尝试转换为WAV格式（需要ffmpeg）
+            conversion_success = False
+            if PYDUB_AVAILABLE:
+                try:
+                    audio = AudioSegment.from_mp3(temp_mp3)
+                    audio.export(output_path, format="wav")
+                    conversion_success = True
+                    logger.info(f"Converted MP3 to WAV: {output_path}")
+                    
+                    # 删除临时MP3文件
+                    if os.path.exists(temp_mp3):
+                        os.remove(temp_mp3)
+                    
+                    return (True, output_path)
+                except Exception as convert_error:
+                    logger.warning(f"Failed to convert MP3 to WAV (ffmpeg not available?): {convert_error}")
+                    conversion_success = False
+            
+            # 如果转换失败或pydub不可用，直接使用MP3文件
+            # 检查输出路径是否以.wav结尾，如果是，改为.mp3
+            if output_path.endswith('.wav'):
+                actual_output_path = output_path.replace('.wav', '.mp3')
+                logger.info(f"Using MP3 format instead of WAV: {actual_output_path}")
+            else:
+                actual_output_path = output_path
+            
+            # 如果临时文件和目标文件不同，移动文件
+            if temp_mp3 != actual_output_path:
+                # 删除已存在的目标文件
+                if os.path.exists(actual_output_path):
+                    os.remove(actual_output_path)
+                # 重命名/移动临时文件
+                os.rename(temp_mp3, actual_output_path)
+            # 如果相同，不需要移动
+            
+            logger.info(f"Speech generated with edge-tts: {actual_output_path}")
+            return (True, actual_output_path)
+            
+        except Exception as e:
+            logger.error(f"Error generating speech with edge-tts: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # 生成静音作为备用
+            self._generate_silent_audio(output_path, text, speed)
+            return (False, output_path)
+    
+    def _generate_silent_audio(self, output_path: str, text: str, speed: float):
+        """
+        生成静音音频
         
         Args:
             output_path: 输出文件路径
             text: 文本内容（用于计算音频长度）
             speed: 语速
-            pitch: 音调
         """
         try:
             # 计算音频长度（基于文本长度和语速）
-            # 假设每秒约3个汉字或5个英文单词
             text_length = len(text)
             duration = max(1.0, text_length / 3.0 / speed)  # 至少1秒
             
@@ -233,10 +393,10 @@ class VoiceCloner:
                 silence = b'\x00\x00' * num_frames
                 wav_file.writeframes(silence)
             
-            logger.info(f"Demo audio generated: {output_path} (duration: {duration:.2f}s)")
+            logger.info(f"Silent audio generated: {output_path} (duration: {duration:.2f}s)")
             
         except Exception as e:
-            logger.error(f"Error generating demo audio: {str(e)}")
+            logger.error(f"Error generating silent audio: {str(e)}")
             # 创建一个非常短的静音文件作为备用
             try:
                 sample_rate = 22050
@@ -342,3 +502,13 @@ class VoiceCloner:
         except Exception as e:
             logger.error(f"Error converting audio format: {str(e)}")
             return False
+    
+    @staticmethod
+    def get_available_voices() -> Dict[str, Dict[str, str]]:
+        """
+        获取可用的预设语音列表
+        
+        Returns:
+            语音ID到语音信息的映射
+        """
+        return PRESET_VOICES.copy()
